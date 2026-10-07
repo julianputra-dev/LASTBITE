@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Clock } from "lucide-react";
 
+interface CountdownTimerProps {
   batasWaktu: string;
   className?: string;
   isBanner?: boolean;
@@ -54,6 +55,7 @@ export default function CountdownTimer({ batasWaktu, className = "", isBanner = 
 
   if (isExpired) {
     return null;
+  }
   let styleClass = "";
   if (isBanner) {
     if (urgency === "danger") styleClass = "bg-red-600 text-white animate-pulse border border-red-400";

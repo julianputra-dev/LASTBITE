@@ -11,6 +11,9 @@ export default function EarningsTab({ userId }: { userId: string }) {
   useEffect(() => {
     const fetchEarnings = async () => {
       setLoading(true);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
       const { data, error } = await supabase
         .from("pesanan")
         .select(`
@@ -19,10 +22,12 @@ export default function EarningsTab({ userId }: { userId: string }) {
         `)
         .eq("kurir_id", userId)
         .eq("status", "completed")
+        .gte("created_at", today.toISOString())
         .order("created_at", { ascending: false });
 
       if (!error && data) {
         setTotalEarnings(data.length * 10000);
+        setHistory(data);
       }
       setLoading(false);
     };
@@ -58,9 +63,6 @@ export default function EarningsTab({ userId }: { userId: string }) {
         <div className="relative z-10">
           <p className="text-orange-50 font-bold uppercase tracking-wider text-xs mb-1">Total Saldo Pendapatan</p>
           <h3 className="text-4xl font-black tracking-tight">{formatCurrency(totalEarnings)}</h3>
-          <p className="text-xs text-orange-100 mt-5 font-medium leading-relaxed">
-            Pencairan otomatis diproses setiap hari Senin ke rekening yang terdaftar di profil Anda.
-          </p>
         </div>
       </div>
 
