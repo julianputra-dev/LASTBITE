@@ -43,7 +43,8 @@ export default function OrderInfoPage() {
         .single();
         
       if (orderData) {
-        setOrder(orderData);
+        const productInfo = Array.isArray(orderData.produk) ? (orderData.produk[0] as any) : (orderData.produk as any);
+        setOrder({ ...orderData, produk: productInfo });
         
         // 2. Count qty
         const timeStart = new Date(new Date(orderData.created_at).getTime() - 60000).toISOString();
@@ -64,16 +65,19 @@ export default function OrderInfoPage() {
         }
 
         // 3. Fetch Seller info
-        const { data: sellerData, error: sellerError } = await supabase
-          .from("profiles")
-          .select("nama, lokasi_gmaps, lokasi")
-          .eq("id", orderData.produk.penjual_id)
-          .single();
-          
-        if (sellerData) {
-          setSeller(sellerData);
-        } else if (sellerError) {
-          console.error("Gagal menarik data penjual:", sellerError);
+        const sellerId = productInfo?.penjual_id;
+        if (sellerId) {
+          const { data: sellerData, error: sellerError } = await supabase
+            .from("profiles")
+            .select("nama, lokasi_gmaps, lokasi")
+            .eq("id", sellerId)
+            .single();
+            
+          if (sellerData) {
+            setSeller(sellerData);
+          } else if (sellerError) {
+            console.error("Gagal menarik data penjual:", sellerError);
+          }
         }
       }
       setLoading(false);
