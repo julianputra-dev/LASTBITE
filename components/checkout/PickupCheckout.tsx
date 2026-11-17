@@ -13,14 +13,28 @@ export default function PickupCheckout({ produk, merchant, qty, userId, vouchers
   const [isVoucherApplied, setIsVoucherApplied] = useState(false);
   const [buktiBayarBase64, setBuktiBayarBase64] = useState<string | null>(null);
   const [adminFee, setAdminFee] = useState(2000);
+  const [escrowBank, setEscrowBank] = useState({
+    name: "BCA",
+    number: "8720-1928-31",
+    holder: "LASTBITE ESCROW PLATFORM"
+  });
 
   useEffect(() => {
     const fetchFees = async () => {
       const { data, error } = await supabase.from("system_settings").select("*");
       if (!error && data) {
+        let bName = "BCA";
+        let bNum = "8720-1928-31";
+        let bHolder = "LASTBITE ESCROW PLATFORM";
+
         data.forEach((setting) => {
-          if (setting.key === "admin_fee") setAdminFee(setting.value);
+          if (setting.key === "admin_fee") setAdminFee(Number(setting.value));
+          if (setting.key === "platform_bank_name") bName = String(setting.value);
+          if (setting.key === "platform_bank_number") bNum = String(setting.value);
+          if (setting.key === "platform_bank_holder") bHolder = String(setting.value);
         });
+
+        setEscrowBank({ name: bName, number: bNum, holder: bHolder });
       }
     };
     fetchFees();
@@ -174,10 +188,17 @@ export default function PickupCheckout({ produk, merchant, qty, userId, vouchers
           <Receipt size={18} className="text-orange-600" /> Pembayaran
         </h4>
         
-        <div className="bg-neutral-50 p-5 rounded-xl border border-neutral-200 mb-4">
-          <p className="text-sm text-neutral-600 mb-1">Transfer ke Rekening Penjual:</p>
-          <p className="text-xl font-bold tracking-wider text-neutral-900">{merchant?.no_rekening || "Belum diatur penjual"}</p>
-          <p className="text-sm font-medium text-neutral-500 mt-1">A.N. {merchant?.nama}</p>
+        <div className="bg-orange-50/60 p-5 rounded-xl border border-orange-200 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-orange-800 uppercase tracking-wider">Rekening Bersama (Escrow)</span>
+            <span className="text-[11px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">Dana Terlindungi</span>
+          </div>
+          <p className="text-sm text-neutral-600 mb-1">Transfer ke Rekening Bank {escrowBank.name}:</p>
+          <p className="text-2xl font-black tracking-wider text-neutral-900">{escrowBank.number}</p>
+          <p className="text-sm font-semibold text-neutral-700 mt-1">A.N. {escrowBank.holder}</p>
+          <p className="text-xs text-neutral-500 mt-2">
+            *Dana transaksi ditampung aman oleh sistem LASTBITE dan akan diteruskan ke penjual setelah pesanan selesai.
+          </p>
         </div>
 
         <div className="space-y-3">

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../utils/supabase";
-import { Loader2, Save, Image as ImageIcon, MapPin, Building2, User, CreditCard } from "lucide-react";
+import { Loader2, Save, Image as ImageIcon, MapPin, Building2, User, CreditCard, CheckCircle2, AlertCircle } from "lucide-react";
 
 export default function Settings({ merchantId, onLocationUpdate }: { merchantId: string, onLocationUpdate: (hasLocation: boolean) => void }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -251,22 +251,38 @@ export default function Settings({ merchantId, onLocationUpdate }: { merchantId:
 
           <hr className="border-neutral-100" />
 
-          {/* REKENING (PELENGKAP) */}
-          <div className="space-y-4">
-            <div>
-              <label className="flex items-center gap-2 text-sm font-semibold text-neutral-700 mb-2">
-                <CreditCard size={16} className="text-orange-500" /> Nomor Rekening Bank
+          {/* REKENING BANK PENCAIRAN */}
+          <div className="space-y-4 bg-orange-50/40 p-5 rounded-2xl border border-orange-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-sm font-bold text-neutral-800">
+                <CreditCard size={18} className="text-orange-600" /> Rekening Bank Pencairan Dana
               </label>
-              <p className="text-xs text-neutral-500 mb-3">
-                Untuk keperluan penarikan dana. Data ini dienkripsi dengan aman (Visual Mockup).
-              </p>
+              {profile.no_rekening && profile.no_rekening.trim() ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <CheckCircle2 size={13} /> Terhubung untuk Penarikan
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                  <AlertCircle size={13} /> Wajib Diisi Sebelum Tarik Saldo
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Data rekening ini digunakan oleh tim admin LASTBITE untuk mentransfer uang hasil penjualan saat Anda mengajukan penarikan dana. Penjual tidak dapat menarik uang sebelum rekening ini diisi.
+            </p>
+
+            <div>
               <input 
                 type="text" 
-                placeholder="1234-5678-9012 a.n Julian"
-                className="w-full md:w-2/3 px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all font-mono tracking-wider"
+                placeholder="Contoh: BCA 1234-5678-90 a.n. Warung Mba Wul"
+                className="w-full px-4 py-3 rounded-xl border border-neutral-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all font-semibold text-neutral-900 bg-white"
                 value={profile.no_rekening}
                 onChange={(e) => setProfile({...profile, no_rekening: e.target.value})}
               />
+              <p className="text-[11px] text-neutral-500 mt-1.5">
+                Format yang disarankan: <strong>Nama Bank - Nomor Rekening - A.N. Pemilik</strong> (Contoh: BCA 8720192831 a.n. Julian)
+              </p>
             </div>
           </div>
 

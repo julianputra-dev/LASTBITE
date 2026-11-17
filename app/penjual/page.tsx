@@ -17,7 +17,8 @@ import {
   Loader2,
   Image as ImageIcon,
   Newspaper,
-  HelpCircle
+  HelpCircle,
+  Wallet as WalletIcon
 } from "lucide-react";
 import { supabase } from "../../utils/supabase";
 import ManageStock from "../../components/penjual/ManageStock";
@@ -25,6 +26,7 @@ import ManageOrders from "../../components/penjual/ManageOrders";
 import SettingsComponent from "../../components/penjual/Settings"; 
 import News from "../../components/News";
 import Helpdesk from "../../components/Helpdesk";
+import Wallet from "../../components/penjual/Wallet";
 
 const generateNumericCode = (uuid: string) => {
   if (!uuid) return "000000";
@@ -354,6 +356,9 @@ export default function SellerDashboard() {
               <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{activeOrders.length}</span>
             )}
           </a>
+          <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('keuangan'); }} className={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${activeTab === 'keuangan' ? 'bg-orange-50 text-orange-700' : 'text-neutral-600 hover:bg-neutral-50'}`}>
+            <WalletIcon size={20} /> Saldo & Tarik Dana
+          </a>
           <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('pengaturan'); }} className={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${activeTab === 'pengaturan' ? 'bg-orange-50 text-orange-700' : 'text-neutral-600 hover:bg-neutral-50'}`}>
             <Settings size={20} /> Pengaturan
           </a>
@@ -548,6 +553,8 @@ export default function SellerDashboard() {
             <ManageStock merchantId={merchantId} />
           ) : activeTab === 'pesanan' && merchantId ? (
             <ManageOrders merchantId={merchantId} />
+          ) : activeTab === 'keuangan' && merchantId ? (
+            <Wallet merchantId={merchantId} onGoToSettings={() => setActiveTab('pengaturan')} />
           ) : activeTab === 'pengaturan' && merchantId ? (
             <SettingsComponent merchantId={merchantId} onLocationUpdate={(has) => setHasLocation(has)} />
           ) : activeTab === 'berita' ? (
