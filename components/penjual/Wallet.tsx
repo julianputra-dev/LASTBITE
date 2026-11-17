@@ -2,13 +2,28 @@
 
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../utils/supabase";
-import { Wallet as WalletIcon, ArrowUpRight, Clock, CheckCircle2, XCircle, AlertCircle, RefreshCw, Loader2, Building2 } from "lucide-react";
+import { 
+  Wallet as WalletIcon, 
+  ArrowUpRight, 
+  Clock, 
+  CheckCircle2, 
+  XCircle, 
+  AlertCircle, 
+  RefreshCw, 
+  Loader2, 
+  Building2,
+  Hourglass,
+  AlertTriangle
+} from "lucide-react";
 
 export default function Wallet({ merchantId, onGoToSettings }: { merchantId: string, onGoToSettings?: () => void }) {
   const [saldo, setSaldo] = useState<number>(0);
+  const [saldoTertahan, setSaldoTertahan] = useState<number>(0);
   const [merchantProfile, setMerchantProfile] = useState<any>(null);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
+  const [escrowOrders, setEscrowOrders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeSubTab, setActiveSubTab] = useState<"escrow" | "withdrawals">("escrow");
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -24,21 +39,49 @@ export default function Wallet({ merchantId, onGoToSettings }: { merchantId: str
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      // 1. Ambil Profil dan Saldo Penjual
+      // 1. Ambil Profil, Saldo Utama, dan Saldo Tertahan
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('id, nama, no_rekening, saldo_penjual')
+        .select('id, nama, no_rekening, saldo_penjual, saldo_tertahan')
         .eq('id', merchantId)
         .single();
 
       if (profileData) {
         setMerchantProfile(profileData);
         setSaldo(Number(profileData.saldo_penjual) || 0);
+        setSaldoTertahan(Number(profileData.saldo_tertahan) || 0);
         setAccountNumber(profileData.no_rekening || "");
         setAccountHolder(profileData.nama || "");
       }
 
-      // 2. Ambil Riwayat Penarikan Dana
+      // 2. Ambil Transaksi Pesanan Escrow untuk Toko Ini
+      const { data: ordersData } = await supabase
+        .from('pesanan')
+        .select(`
+          id,
+          created_at,
+          status,
+          escrow_status,
+          catatan_verifikasi,
+          rejected_at,
+          pembeli:profiles!pembeli_id (
+            nama,
+            nomor_hp
+          ),
+          produk!inner (
+            nama_makanan,
+            harga_diskon,
+            penjual_id
+          )
+        `)
+        .eq('produk.penjual_id', merchantId)
+        .order('created_at', { ascending: false });
+
+      if (ordersData) {
+        setEscrowOrders(ordersData);
+      }
+
+      // 3. Ambil Riwayat Penarikan Dana
       const { data: withdrawData } = await supabase
         .from('withdrawals')
         .select('*')
@@ -59,6 +102,13 @@ export default function Wallet({ merchantId, onGoToSettings }: { merchantId: str
     if (merchantId) fetchData();
   }, [merchantId]);
 
+  const getRemainingDisputeDays = (rejectedAt: string) => {
+    if (!rejectedAt) return 0;
+    const expiryTime = new Date(rejectedAt).getTime() + 7 * 24 * 60 * 60 * 1000;
+    const diffMs = expiryTime - Date.now();
+    return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  };
+
   const handleWithdrawSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg("");
@@ -74,7 +124,7 @@ export default function Wallet({ merchantId, onGoToSettings }: { merchantId: str
       return;
     }
     if (withdrawAmount > saldo) {
-      setErrorMsg("Saldo tidak mencukupi untuk melakukan penarikan ini.");
+      setErrorMsg("Saldo siap tarik tidak mencukupi untuk melakukan penarikan ini.");
       return;
     }
     if (!bankName.trim() || !accountNumber.trim() || !accountHolder.trim()) {
@@ -84,7 +134,6 @@ export default function Wallet({ merchantId, onGoToSettings }: { merchantId: str
 
     setIsSubmitting(true);
     try {
-      // Potong saldo di tabel profiles
       const saldoSisa = saldo - withdrawAmount;
       const { error: profileError } = await supabase
         .from('profiles')
@@ -93,7 +142,6 @@ export default function Wallet({ merchantId, onGoToSettings }: { merchantId: str
 
       if (profileError) throw profileError;
 
-      // Catat ke tabel withdrawals
       const { error: withdrawError } = await supabase
         .from('withdrawals')
         .insert([{
@@ -160,113 +208,251 @@ export default function Wallet({ merchantId, onGoToSettings }: { merchantId: str
         </div>
       )}
 
-      {/* Kartu Saldo */}
-      <div className="bg-gradient-to-br from-neutral-900 to-neutral-800 rounded-3xl p-6 md:p-8 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6 border border-neutral-700">
-        <div>
-          <div className="flex items-center gap-2 text-neutral-400 mb-2">
-            <WalletIcon size={20} className="text-orange-500" />
-            <span className="text-sm font-semibold uppercase tracking-wider">Saldo Hasil Penjualan (Escrow)</span>
-          </div>
-          <p className="text-4xl md:text-5xl font-black tracking-tight text-white mb-2">
-            {formatCurrency(saldo)}
-          </p>
-          <p className="text-xs text-neutral-400">
-            *Pendapatan dari pesanan bertambah otomatis setelah status pesanan diselesaikan (Completed).
-          </p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-3">
-          <button 
-            onClick={() => {
-              if (!hasBankInfo) {
-                alert("Anda wajib mengatur nomor rekening bank di menu Pengaturan terlebih dahulu.");
-                if (onGoToSettings) onGoToSettings();
-                return;
-              }
-              setIsModalOpen(true);
-            }}
-            disabled={saldo < 10000 || !hasBankInfo}
-            className="flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-700 disabled:text-neutral-500 text-white font-bold px-6 py-3.5 rounded-2xl transition-all shadow-lg shadow-orange-600/30 disabled:shadow-none"
-          >
-            <ArrowUpRight size={20} /> {!hasBankInfo ? "Rekening Belum Diatur" : "Tarik Saldo"}
-          </button>
-          <button 
-            onClick={fetchData}
-            className="p-3.5 bg-neutral-700/60 hover:bg-neutral-700 rounded-2xl text-neutral-300 transition-colors flex items-center justify-center"
-            title="Muat ulang saldo"
-          >
-            <RefreshCw size={18} className={isLoading ? "animate-spin" : ""} />
-          </button>
-        </div>
-      </div>
-
-      {/* Tabel Riwayat Penarikan */}
-      <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-neutral-100 flex items-center justify-between">
+      {/* KARTU SALDO GANDA (SALDO UTAMA VS SALDO SEDANG DIPROSES) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Kartu 1: Saldo Siap Tarik */}
+        <div className="bg-gradient-to-br from-neutral-900 to-neutral-800 rounded-3xl p-6 md:p-8 text-white shadow-xl flex flex-col justify-between border border-neutral-700">
           <div>
-            <h3 className="font-bold text-lg text-neutral-900">Riwayat Penarikan Dana</h3>
-            <p className="text-sm text-neutral-500">Status pencairan dana ke rekening bank Anda.</p>
+            <div className="flex items-center justify-between gap-2 text-neutral-400 mb-2">
+              <div className="flex items-center gap-2">
+                <WalletIcon size={20} className="text-orange-500" />
+                <span className="text-xs font-bold uppercase tracking-wider">Saldo Siap Ditarik</span>
+              </div>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                Sudah Sah & Diverifikasi
+              </span>
+            </div>
+            <p className="text-3xl md:text-4xl font-black tracking-tight text-white mb-2">
+              {formatCurrency(saldo)}
+            </p>
+            <p className="text-xs text-neutral-400 leading-relaxed">
+              Dana bersih hasil penjualan yang uangnya sudah diverifikasi oleh admin di mutasi bank. Anda dapat mencairkannya ke rekening Anda.
+            </p>
+          </div>
+
+          <div className="pt-6 mt-6 border-t border-neutral-700/60 flex items-center justify-between gap-3">
+            <button 
+              onClick={() => {
+                if (!hasBankInfo) {
+                  alert("Anda wajib mengatur nomor rekening bank di menu Pengaturan terlebih dahulu.");
+                  if (onGoToSettings) onGoToSettings();
+                  return;
+                }
+                setIsModalOpen(true);
+              }}
+              disabled={saldo < 10000 || !hasBankInfo}
+              className="flex-1 flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-700 disabled:text-neutral-500 text-white font-bold px-5 py-3 rounded-xl transition-all shadow-md shadow-orange-600/30 disabled:shadow-none text-sm"
+            >
+              <ArrowUpRight size={18} /> {!hasBankInfo ? "Rekening Belum Diatur" : "Tarik Saldo"}
+            </button>
+            <button 
+              onClick={fetchData}
+              className="p-3 bg-neutral-700/60 hover:bg-neutral-700 rounded-xl text-neutral-300 transition-colors"
+              title="Muat ulang"
+            >
+              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+            </button>
           </div>
         </div>
 
-        {withdrawals.length === 0 ? (
-          <div className="text-center py-12 text-neutral-400 font-medium">
-            Belum ada riwayat penarikan dana.
+        {/* Kartu 2: Saldo Sedang Diproses (Tertahan) */}
+        <div className="bg-white rounded-3xl p-6 md:p-8 text-neutral-800 shadow-sm border border-neutral-200 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-2 text-neutral-500 mb-2">
+              <div className="flex items-center gap-2">
+                <Hourglass size={20} className="text-amber-500" />
+                <span className="text-xs font-bold uppercase tracking-wider">Saldo Sedang Diproses</span>
+              </div>
+              <span className="text-[10px] bg-amber-50 text-amber-700 font-bold px-2.5 py-0.5 rounded-full border border-amber-200">
+                Menunggu Verifikasi Admin
+              </span>
+            </div>
+            <p className="text-3xl md:text-4xl font-black tracking-tight text-amber-600 mb-2">
+              {formatCurrency(saldoTertahan)}
+            </p>
+            <p className="text-xs text-neutral-500 leading-relaxed">
+              Uang dari pesanan yang telah selesai disiapkan. Dana akan otomatis dipindahkan ke <strong>Saldo Siap Ditarik</strong> setelah admin mengecek mutasi transfer pembeli.
+            </p>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-neutral-50 text-neutral-600 text-xs uppercase font-bold tracking-wider border-b border-neutral-100">
-                  <th className="py-4 px-6">Tanggal</th>
-                  <th className="py-4 px-6">Nominal</th>
-                  <th className="py-4 px-6">Rekening Tujuan</th>
-                  <th className="py-4 px-6">Status</th>
-                  <th className="py-4 px-6">Catatan Admin</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 text-sm">
-                {withdrawals.map((w) => (
-                  <tr key={w.id} className="hover:bg-neutral-50/50 transition-colors">
-                    <td className="py-4 px-6 text-neutral-500 font-medium">{formatDate(w.created_at)}</td>
-                    <td className="py-4 px-6 font-bold text-neutral-900">{formatCurrency(w.nominal)}</td>
-                    <td className="py-4 px-6">
-                      <p className="font-semibold text-neutral-800">{w.bank_tujuan} - {w.nomor_rekening}</p>
-                      <p className="text-xs text-neutral-500">A.N. {w.nama_pemilik_rekening}</p>
-                    </td>
-                    <td className="py-4 px-6">
-                      {w.status === 'pending' && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-yellow-50 text-yellow-700 border border-yellow-200">
-                          <Clock size={12} /> Menunggu Transfer
-                        </span>
-                      )}
-                      {w.status === 'approved' && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-200">
-                          <CheckCircle2 size={12} /> Berhasil Ditransfer
-                        </span>
-                      )}
-                      {w.status === 'rejected' && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">
-                          <XCircle size={12} /> Ditolak
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-4 px-6 text-xs text-neutral-500">
-                      {w.catatan_admin || "-"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+          <div className="pt-4 mt-4 border-t border-neutral-100 flex items-center justify-between text-xs text-neutral-500">
+            <span>Sistem pengamanan anti-fraud transaksi</span>
+            <span className="font-semibold text-neutral-700">Estimasi 1-24 Jam</span>
           </div>
-        )}
+        </div>
       </div>
+
+      {/* NAVIGASI SUB-TAB DETAIL */}
+      <div className="flex gap-2 border-b border-neutral-200 pb-2">
+        <button
+          onClick={() => setActiveSubTab("escrow")}
+          className={`px-5 py-2.5 font-bold text-sm rounded-xl transition-colors ${
+            activeSubTab === "escrow"
+              ? "bg-neutral-900 text-white"
+              : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+          }`}
+        >
+          Status Pencairan Pesanan ({escrowOrders.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab("withdrawals")}
+          className={`px-5 py-2.5 font-bold text-sm rounded-xl transition-colors ${
+            activeSubTab === "withdrawals"
+              ? "bg-neutral-900 text-white"
+              : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+          }`}
+        >
+          Riwayat Penarikan Dana ({withdrawals.length})
+        </button>
+      </div>
+
+      {/* KONTEN TAB 1: STATUS PENCAIRAN PESANAN (ESCROW) */}
+      {activeSubTab === "escrow" && (
+        <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-neutral-100">
+            <h3 className="font-bold text-lg text-neutral-900">Daftar Transaksi Pesanan & Status Escrow</h3>
+            <p className="text-sm text-neutral-500">Pantau proses perpindahan dana dari setiap porsi makanan yang Anda jual.</p>
+          </div>
+
+          {escrowOrders.length === 0 ? (
+            <div className="text-center py-12 text-neutral-400 font-medium">
+              Belum ada transaksi pesanan yang masuk ke dompet toko.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-neutral-50 text-neutral-600 text-xs uppercase font-bold tracking-wider border-b border-neutral-100">
+                    <th className="py-4 px-6">ID Pesanan</th>
+                    <th className="py-4 px-6">Tanggal</th>
+                    <th className="py-4 px-6">Makanan</th>
+                    <th className="py-4 px-6">Pembeli</th>
+                    <th className="py-4 px-6">Nominal Hak Toko</th>
+                    <th className="py-4 px-6">Status Dana</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 text-sm">
+                  {escrowOrders.map((order) => {
+                    const escrow = order.escrow_status || "pending";
+                    const remainingDays = getRemainingDisputeDays(order.rejected_at);
+
+                    return (
+                      <tr key={order.id} className="hover:bg-neutral-50/50 transition-colors">
+                        <td className="py-4 px-6 font-bold text-neutral-900">#{order.id.substring(0, 8)}</td>
+                        <td className="py-4 px-6 text-neutral-500">{formatDate(order.created_at)}</td>
+                        <td className="py-4 px-6 font-semibold text-neutral-800">{order.produk?.nama_makanan}</td>
+                        <td className="py-4 px-6 text-neutral-700">{order.pembeli?.nama || "Pembeli"}</td>
+                        <td className="py-4 px-6 font-extrabold text-orange-600">
+                          {formatCurrency(order.produk?.harga_diskon || 0)}
+                        </td>
+                        <td className="py-4 px-6">
+                          {escrow === "pending" && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                              <Clock size={12} /> Sedang Diverifikasi Admin
+                            </span>
+                          )}
+                          {escrow === "approved" && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 size={12} /> Sudah di Saldo Siap Tarik
+                            </span>
+                          )}
+                          {escrow === "rejected" && (
+                            <div className="space-y-1">
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">
+                                <XCircle size={12} /> Ditolak Admin
+                              </span>
+                              {order.catatan_verifikasi && (
+                                <p className="text-[11px] text-red-600">Alasan: {order.catatan_verifikasi}</p>
+                              )}
+                              {remainingDays > 0 ? (
+                                <p className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 inline-block">
+                                  Masa Sanggah: {remainingDays} Hari Lagi (Hubungi Admin)
+                                </p>
+                              ) : (
+                                <p className="text-[10px] text-neutral-400">Masa sanggah kedaluwarsa</p>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* KONTEN TAB 2: RIWAYAT PENARIKAN (WITHDRAWALS) */}
+      {activeSubTab === "withdrawals" && (
+        <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-neutral-100 flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-lg text-neutral-900">Riwayat Pencairan Dana</h3>
+              <p className="text-sm text-neutral-500">Status pencairan dana dari saldo utama ke rekening bank Anda.</p>
+            </div>
+          </div>
+
+          {withdrawals.length === 0 ? (
+            <div className="text-center py-12 text-neutral-400 font-medium">
+              Belum ada riwayat penarikan dana.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-neutral-50 text-neutral-600 text-xs uppercase font-bold tracking-wider border-b border-neutral-100">
+                    <th className="py-4 px-6">Tanggal</th>
+                    <th className="py-4 px-6">Nominal</th>
+                    <th className="py-4 px-6">Rekening Tujuan</th>
+                    <th className="py-4 px-6">Status</th>
+                    <th className="py-4 px-6">Catatan Admin</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 text-sm">
+                  {withdrawals.map((w) => (
+                    <tr key={w.id} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="py-4 px-6 text-neutral-500 font-medium">{formatDate(w.created_at)}</td>
+                      <td className="py-4 px-6 font-bold text-neutral-900">{formatCurrency(w.nominal)}</td>
+                      <td className="py-4 px-6">
+                        <p className="font-semibold text-neutral-800">{w.bank_tujuan} - {w.nomor_rekening}</p>
+                        <p className="text-xs text-neutral-500">A.N. {w.nama_pemilik_rekening}</p>
+                      </td>
+                      <td className="py-4 px-6">
+                        {w.status === 'pending' && (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-yellow-50 text-yellow-700 border border-yellow-200">
+                            <Clock size={12} /> Menunggu Transfer
+                          </span>
+                        )}
+                        {w.status === 'approved' && (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-200">
+                            <CheckCircle2 size={12} /> Berhasil Ditransfer
+                          </span>
+                        )}
+                        {w.status === 'rejected' && (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">
+                            <XCircle size={12} /> Ditolak
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-4 px-6 text-xs text-neutral-500">
+                        {w.catatan_admin || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* MODAL TARIK DANA */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl border border-neutral-100 animate-in fade-in zoom-in-95 duration-200">
-            <h3 className="text-xl font-black text-neutral-900 mb-1">Tarik Saldo Pendapatan</h3>
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl border border-neutral-100">
+            <h3 className="text-xl font-black text-neutral-900 mb-1">Tarik Saldo Siap Ditarik</h3>
             <p className="text-sm text-neutral-500 mb-6">Dana akan dikirim oleh admin LASTBITE ke rekening tujuan Anda.</p>
 
             {errorMsg && (
@@ -288,7 +474,7 @@ export default function Wallet({ merchantId, onGoToSettings }: { merchantId: str
                   onChange={(e) => setAmount(e.target.value)}
                   className="w-full border border-neutral-300 rounded-xl p-3 text-lg font-bold text-neutral-900 focus:ring-2 focus:ring-orange-500 focus:outline-none"
                 />
-                <p className="text-xs text-neutral-500 mt-1">Saldo tersedia: <span className="font-bold text-neutral-800">{formatCurrency(saldo)}</span></p>
+                <p className="text-xs text-neutral-500 mt-1">Saldo siap tarik: <span className="font-bold text-neutral-800">{formatCurrency(saldo)}</span></p>
               </div>
 
               <div>

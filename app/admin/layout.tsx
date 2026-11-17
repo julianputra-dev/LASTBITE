@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/utils/supabase";
 import Link from "next/link";
-import { Users, Truck, Wallet, Newspaper, LifeBuoy, LogOut, ShieldAlert, CreditCard } from "lucide-react";
+import { Users, Truck, Wallet, Newspaper, LifeBuoy, LogOut, ShieldAlert, CreditCard, ShieldCheck } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
@@ -70,9 +70,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const menuItems = [
     { name: "Dashboard", icon: ShieldAlert, path: "/admin" },
+    { name: "Verifikasi Transaksi", icon: ShieldCheck, path: "/admin/transactions" },
+    { name: "Pencairan Dana", icon: CreditCard, path: "/admin/withdrawals" },
     { name: "Manajemen Pengguna", icon: Users, path: "/admin/users" },
     { name: "Verifikasi Kurir", icon: Truck, path: "/admin/couriers" },
-    { name: "Pencairan Dana", icon: CreditCard, path: "/admin/withdrawals" },
     { name: "Pengaturan Biaya", icon: Wallet, path: "/admin/settings" },
     { name: "Berita", icon: Newspaper, path: "/admin/news" },
     { name: "Helpdesk", icon: LifeBuoy, path: "/admin/helpdesk" },
