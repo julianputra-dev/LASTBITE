@@ -31,7 +31,7 @@ export default function OrderInfoPage() {
       const { data: orderData, error } = await supabase
         .from("pesanan")
         .select(`
-          id, created_at, status, metode_pengambilan, produk_id, pembeli_id,
+          id, created_at, status, metode_pengambilan, produk_id, pembeli_id, alamat_pengiriman, link_gmaps,
           produk (
             nama_makanan,
             harga_diskon,
@@ -182,6 +182,23 @@ export default function OrderInfoPage() {
             {seller.lokasi_gmaps && (
               <a href={seller.lokasi_gmaps} target="_blank" rel="noreferrer" className="mt-1 flex items-center justify-center gap-2 bg-neutral-900 text-white py-3 rounded-xl font-bold hover:bg-neutral-800 transition">
                 Buka di Google Maps
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Tujuan Pengantaran - Tampil untuk Delivery */}
+        {isDelivery && order?.alamat_pengiriman && (
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-neutral-100 flex flex-col gap-3">
+            <h3 className="font-bold text-neutral-900 flex items-center gap-2">
+              <Truck size={18} className="text-orange-600" /> Tujuan Pengantaran Kurir
+            </h3>
+            <div className="bg-neutral-50 p-4 rounded-xl border border-neutral-100">
+              <p className="text-sm text-neutral-800 whitespace-pre-line leading-relaxed">{order.alamat_pengiriman}</p>
+            </div>
+            {order.link_gmaps && (
+              <a href={order.link_gmaps} target="_blank" rel="noreferrer" className="mt-1 flex items-center justify-center gap-2 bg-neutral-900 text-white py-3 rounded-xl font-bold hover:bg-neutral-800 transition">
+                Buka Titik Maps Pembeli
               </a>
             )}
           </div>

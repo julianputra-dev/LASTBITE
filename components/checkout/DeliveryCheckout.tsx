@@ -14,6 +14,8 @@ export default function DeliveryCheckout({ produk, merchant, qty, userId, vouche
   const [buktiBayarBase64, setBuktiBayarBase64] = useState<string | null>(null);
   const [alamatPengiriman, setAlamatPengiriman] = useState("");
   const [linkGmaps, setLinkGmaps] = useState("");
+  const [isAutoFilled, setIsAutoFilled] = useState(false);
+  const [saveToProfile, setSaveToProfile] = useState(false);
   const [adminFee, setAdminFee] = useState(2000);
   const [ongkir, setOngkir] = useState(10000);
   const [escrowBank, setEscrowBank] = useState({
@@ -43,6 +45,37 @@ export default function DeliveryCheckout({ produk, merchant, qty, userId, vouche
     };
     fetchFees();
   }, []);
+
+  // Ambil alamat profil pembeli secara otomatis
+  useEffect(() => {
+    const fetchBuyerAddress = async () => {
+      if (!userId) return;
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("alamat, lokasi, lokasi_gmaps")
+          .eq("id", userId)
+          .single();
+
+        if (data && !error) {
+          const profileAddress = data.alamat || data.lokasi || "";
+          const profileGmaps = data.lokasi_gmaps || "";
+          
+          if (profileAddress) {
+            setAlamatPengiriman(profileAddress);
+            setIsAutoFilled(true);
+          }
+          if (profileGmaps) {
+            setLinkGmaps(profileGmaps);
+          }
+        }
+      } catch (err) {
+        console.error("Gagal mengambil alamat profil:", err);
+      }
+    };
+
+    fetchBuyerAddress();
+  }, [userId]);
 
   const selectedVoucher = vouchers.find(v => v.code === voucher);
   const voucherDiscount = isVoucherApplied && selectedVoucher ? selectedVoucher.amount : 0;
@@ -85,27 +118,55 @@ export default function DeliveryCheckout({ produk, merchant, qty, userId, vouche
       alert("Harap unggah bukti pembayaran terlebih dahulu.");
       return;
     }
-    if (!alamatPengiriman) {
+    if (!alamatPengiriman.trim()) {
       alert("Harap masukkan alamat pengiriman Anda.");
       return;
     }
     
     setIsSubmitting(true);
     
+    // Simpan ke profil pembeli jika dicentang atau belum pernah ada alamat tersimpan
+    if (saveToProfile) {
+      try {
+        const updatePayload: any = { 
+          alamat: alamatPengiriman.trim(), 
+          lokasi: alamatPengiriman.trim(),
+          lokasi_gmaps: linkGmaps.trim() || null 
+        };
+        const { error: updateErr } = await supabase
+          .from("profiles")
+          .update(updatePayload)
+          .eq("id", userId);
+
+        if (updateErr) {
+          // Fallback jika kolom alamat belum ada di skema
+          await supabase
+            .from("profiles")
+            .update({ 
+              lokasi: alamatPengiriman.trim(), 
+              lokasi_gmaps: linkGmaps.trim() || null 
+            })
+            .eq("id", userId);
+        }
+      } catch (err) {
+        console.error("Gagal memperbarui alamat profil:", err);
+      }
+    }
+
     const orderItems = Array(qty).fill({
       pembeli_id: userId,
       produk_id: produk.id,
       metode_pengambilan: "delivery",
       status: "pending",
       bukti_bayar_url: buktiBayarBase64,
-      alamat_pengiriman: alamatPengiriman,
-      link_gmaps: linkGmaps || null
+      alamat_pengiriman: alamatPengiriman.trim(),
+      link_gmaps: linkGmaps.trim() || null
     });
 
     const { error: pesananError } = await supabase.from("pesanan").insert(orderItems);
 
     if (pesananError) {
-      alert("Gagal memproses pesanan.");
+      alert("Gagal memproses pesanan: " + pesananError.message);
       setIsSubmitting(false);
       return;
     }
@@ -137,27 +198,55 @@ export default function DeliveryCheckout({ produk, merchant, qty, userId, vouche
 
       {/* Alamat Pengiriman */}
       <div>
-        <h4 className="font-bold text-neutral-900 mb-3 flex items-center gap-2">
-          <Truck size={18} className="text-orange-600" /> Alamat Pengiriman
-        </h4>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h4 className="font-bold text-neutral-900 flex items-center gap-2">
+            <Truck size={18} className="text-orange-600" /> Alamat Pengiriman
+          </h4>
+          {isAutoFilled ? (
+            <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 shadow-2xs">
+              <CheckCircle size={12} className="text-emerald-600" /> Terisi otomatis dari profil
+            </span>
+          ) : (
+            <Link 
+              href="/pembeli/profil" 
+              className="text-xs text-orange-600 hover:text-orange-700 font-bold hover:underline"
+            >
+              Atur di Profil Saya &rarr;
+            </Link>
+          )}
+        </div>
         <textarea 
-          className="w-full p-4 border border-neutral-300 rounded-xl text-sm focus:ring-2 focus:ring-orange-500 bg-white min-h-[100px] mb-3"
-          placeholder="Contoh: Jl. Sudirman No. 12, RT 01/RW 02 (Rumah Pagar Hitam)"
+          className="w-full p-4 border border-neutral-300 rounded-xl text-sm focus:ring-2 focus:ring-orange-500 bg-white min-h-[100px] mb-2"
+          placeholder="Contoh: Jl. Sudirman No. 12, RT 01/RW 02 (Rumah Pagar Hitam, samping toko kelontong)"
           value={alamatPengiriman}
-          onChange={(e) => setAlamatPengiriman(e.target.value)}
+          onChange={(e) => {
+            setAlamatPengiriman(e.target.value);
+            if (isAutoFilled) setIsAutoFilled(false);
+          }}
         ></textarea>
         
-        <h4 className="font-bold text-neutral-900 mb-3 flex items-center gap-2 mt-4">
-          <MapPin size={18} className="text-orange-600" /> Link Google Maps (Opsional)
+        <h4 className="font-bold text-neutral-900 mb-2 flex items-center gap-2 mt-4">
+          <MapPin size={18} className="text-orange-600" /> Link Titik Google Maps (Opsional)
         </h4>
         <input 
           type="text"
           className="w-full p-4 border border-neutral-300 rounded-xl text-sm focus:ring-2 focus:ring-orange-500 bg-white"
-          placeholder="Tempel link Google Maps di sini (opsional)"
+          placeholder="Tempel link Google Maps di sini (contoh: https://maps.app.goo.gl/...)"
           value={linkGmaps}
           onChange={(e) => setLinkGmaps(e.target.value)}
         />
-        <p className="text-xs text-neutral-500 mt-2">*Pastikan alamat dan link jelas agar kurir mudah menemukan lokasi Anda.</p>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mt-2">
+          <p className="text-xs text-neutral-500">*Pastikan alamat dan titik maps jelas agar kurir mudah menemukan lokasi Anda.</p>
+          <label className="flex items-center gap-2 text-xs font-bold text-neutral-700 cursor-pointer select-none">
+            <input 
+              type="checkbox" 
+              checked={saveToProfile} 
+              onChange={(e) => setSaveToProfile(e.target.checked)} 
+              className="rounded text-orange-600 focus:ring-orange-500" 
+            />
+            <span>Simpan perubahan ke alamat profil saya</span>
+          </label>
+        </div>
       </div>
 
       {/* Voucher */}
@@ -271,7 +360,7 @@ export default function DeliveryCheckout({ produk, merchant, qty, userId, vouche
       {/* Tombol Aksi */}
       <button 
         onClick={handleKonfirmasi}
-        disabled={isSubmitting || !buktiBayarBase64 || !alamatPengiriman}
+        disabled={isSubmitting || !buktiBayarBase64 || !alamatPengiriman.trim()}
         className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-orange-600/30 disabled:opacity-50 disabled:cursor-not-allowed text-lg mt-2"
       >
         {isSubmitting ? 'Memproses...' : 'Konfirmasi & Bayar Pesanan'}
