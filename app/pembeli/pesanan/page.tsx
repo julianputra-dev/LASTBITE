@@ -15,87 +15,96 @@ export default function PesananPage() {
   const [pickupOrders, setPickupOrders] = useState<any[]>([]);
   const [deliveryOrders, setDeliveryOrders] = useState<any[]>([]);
 
-  useEffect(() => {
-    const fetchOrders = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push("/login");
-        return;
-      }
+  const fetchOrders = async () => {
+    setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      router.push("/login");
+      return;
+    }
 
-      const { data, error } = await supabase
-        .from("pesanan")
-        .select(`
+    const { data, error } = await supabase
+      .from("pesanan")
+      .select(`
+        id,
+        metode_pengambilan,
+        created_at,
+        status,
+        pembeli_id,
+        produk_id,
+        kurir_id,
+        alamat_pengiriman,
+        link_gmaps,
+        produk (
           id,
-          metode_pengambilan,
-          created_at,
-          status,
-          pembeli_id,
-          produk_id,
-          produk (
-            id,
-            nama_makanan,
-            gambar_url,
-            harga_diskon,
-            penjual_id
-          )
-        `)
-        .eq("pembeli_id", user.id)
-        .order("created_at", { ascending: false });
+          nama_makanan,
+          gambar_url,
+          harga_diskon,
+          penjual_id
+        )
+      `)
+      .eq("pembeli_id", user.id)
+      .order("created_at", { ascending: false });
 
-      if (data) {
-        // Group logic to handle 'qty' since the database lacks a qty column 
-        // and checkout inserts multiple rows simultaneously.
-        const groupedMap: Record<string, any> = {};
-        
-        data.forEach(item => {
-          // Truncating milliseconds/seconds variance to group identical simultaneous checkout items
-          const timeKey = new Date(item.created_at).toISOString().slice(0, 16); 
-          const key = `${item.produk_id}-${timeKey}`;
-          
-          if (!groupedMap[key]) {
-            groupedMap[key] = { ...item, qty: 1, rawIds: [item.id] };
-          } else {
-            groupedMap[key].qty += 1;
-            groupedMap[key].rawIds.push(item.id);
-          }
+    if (data) {
+      // Ambil data kurir jika ada pesanan yang sudah diambil kurir
+      const kurirIds = Array.from(new Set(data.map(d => d.kurir_id).filter(Boolean)));
+      const couriersMap: Record<string, any> = {};
+
+      if (kurirIds.length > 0) {
+        const [profilesRes, couriersRes] = await Promise.all([
+          supabase.from("profiles").select("id, nama, nomor_hp, foto_profil, avatar_url").in("id", kurirIds),
+          supabase.from("couriers").select("user_id, full_name, phone_number, face_photo_url").in("user_id", kurirIds)
+        ]);
+
+        kurirIds.forEach(kId => {
+          const prof = profilesRes.data?.find(p => p.id === kId);
+          const cour = couriersRes.data?.find(c => c.user_id === kId);
+          couriersMap[kId] = {
+            id: kId,
+            nama: cour?.full_name || prof?.nama || "Kurir LastBite",
+            nomor_hp: cour?.phone_number || prof?.nomor_hp || null,
+            foto: cour?.face_photo_url || prof?.foto_profil || prof?.avatar_url || null
+          };
         });
-
-        const groupedArray = Object.values(groupedMap);
-        
-        setPickupOrders(groupedArray.filter(o => o.metode_pengambilan === 'pickup'));
-        setDeliveryOrders(groupedArray.filter(o => o.metode_pengambilan === 'delivery'));
       }
-      
-      setLoading(false);
-    };
 
+      // Group logic to handle 'qty' per simultaneous checkout
+      const groupedMap: Record<string, any> = {};
+      
+      data.forEach(item => {
+        const timeKey = new Date(item.created_at).toISOString().slice(0, 16); 
+        const key = `${item.produk_id}-${timeKey}`;
+        const courierInfo = item.kurir_id ? couriersMap[item.kurir_id] : null;
+        
+        if (!groupedMap[key]) {
+          groupedMap[key] = { 
+            ...item, 
+            qty: 1, 
+            rawIds: [item.id],
+            kurir: courierInfo
+          };
+        } else {
+          groupedMap[key].qty += 1;
+          groupedMap[key].rawIds.push(item.id);
+          if (!groupedMap[key].kurir && courierInfo) {
+            groupedMap[key].kurir = courierInfo;
+          }
+        }
+      });
+
+      const groupedArray = Object.values(groupedMap);
+      
+      setPickupOrders(groupedArray.filter(o => o.metode_pengambilan === 'pickup'));
+      setDeliveryOrders(groupedArray.filter(o => o.metode_pengambilan === 'delivery'));
+    }
+    
+    setLoading(false);
+  };
+
+  useEffect(() => {
     fetchOrders();
   }, [router]);
-
-  const refreshOrders = () => {
-    setLoading(true);
-    // trick to re-trigger useEffect without adding it to dep array, or just extract fetchOrders
-    const fetchOrders = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from("pesanan").select("id, metode_pengambilan, created_at, status, pembeli_id, produk_id, produk (id, nama_makanan, gambar_url, harga_diskon, penjual_id)").eq("pembeli_id", user.id).order("created_at", { ascending: false });
-      if (data) {
-        const groupedMap: Record<string, any> = {};
-        data.forEach(item => {
-          const timeKey = new Date(item.created_at).toISOString().slice(0, 16); 
-          const key = `${item.produk_id}-${timeKey}`;
-          if (!groupedMap[key]) groupedMap[key] = { ...item, qty: 1, rawIds: [item.id] };
-          else { groupedMap[key].qty += 1; groupedMap[key].rawIds.push(item.id); }
-        });
-        const groupedArray = Object.values(groupedMap);
-        setPickupOrders(groupedArray.filter(o => o.metode_pengambilan === 'pickup'));
-        setDeliveryOrders(groupedArray.filter(o => o.metode_pengambilan === 'delivery'));
-      }
-      setLoading(false);
-    };
-    fetchOrders();
-  };
 
   return (
     <div className="min-h-screen bg-neutral-100 font-sans pb-24 text-neutral-800">
@@ -135,9 +144,9 @@ export default function PesananPage() {
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-orange-600"></div>
           </div>
         ) : activeTab === "pickup" ? (
-          <PickupOrders orders={pickupOrders} onRefresh={refreshOrders} />
+          <PickupOrders orders={pickupOrders} onRefresh={fetchOrders} />
         ) : (
-          <DeliveryOrders orders={deliveryOrders} onRefresh={refreshOrders} />
+          <DeliveryOrders orders={deliveryOrders} onRefresh={fetchOrders} />
         )}
       </div>
     </div>
