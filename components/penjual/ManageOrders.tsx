@@ -2,7 +2,36 @@
 
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../utils/supabase";
-import { Loader2, CheckCircle, XCircle, Clock, PackageCheck, PlayCircle, Truck } from "lucide-react";
+import { 
+  Loader2, 
+  CheckCircle, 
+  XCircle, 
+  Clock, 
+  PackageCheck, 
+  PlayCircle, 
+  Truck, 
+  User, 
+  Phone, 
+  MapPin, 
+  ExternalLink, 
+  Store, 
+  X 
+} from "lucide-react";
+
+interface BuyerInfo {
+  id: string;
+  nama: string;
+  email: string | null;
+  nomor_hp: string | null;
+  foto_profil: string | null;
+  alamat: string | null;
+  lokasi: string | null;
+  lokasi_gmaps: string | null;
+  alamat_pengiriman: string | null;
+  link_gmaps: string | null;
+  orderType: string;
+  orderCode: string;
+}
 
 interface Order {
   id: string;
@@ -10,6 +39,7 @@ interface Order {
   qty: number;
   items: string;
   buyerName: string;
+  buyerInfo: BuyerInfo;
   type: string;
   time: string;
   status: string;
@@ -30,6 +60,7 @@ export default function ManageOrders({ merchantId }: { merchantId: string }) {
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [selectedProof, setSelectedProof] = useState<string | null>(null);
+  const [selectedBuyer, setSelectedBuyer] = useState<BuyerInfo | null>(null);
 
   useEffect(() => {
     if (merchantId) fetchOrders();
@@ -46,6 +77,12 @@ export default function ManageOrders({ merchantId }: { merchantId: string }) {
           status, 
           created_at,
           bukti_bayar_url,
+          alamat_pengiriman,
+          link_gmaps,
+          pembeli_id,
+          pembeli:profiles!pembeli_id (
+            *
+          ),
           produk!inner (
             nama_makanan,
             harga_diskon,
@@ -65,12 +102,36 @@ export default function ManageOrders({ merchantId }: { merchantId: string }) {
           const timeKey = new Date(order.created_at).toISOString().slice(0, 16);
           const key = `${productInfo?.nama_makanan}-${timeKey}-${order.metode_pengambilan}`;
           
+          const buyerData = Array.isArray(order.pembeli) ? order.pembeli[0] : order.pembeli;
+          const bName = buyerData?.nama || 'Pelanggan';
+          const bPhoto = buyerData?.foto_profil || buyerData?.avatar_url || null;
+          const bPhone = buyerData?.nomor_hp || null;
+          const bEmail = buyerData?.email || null;
+          const bAlamat = order.alamat_pengiriman || buyerData?.alamat || buyerData?.lokasi || null;
+          const bGmaps = order.link_gmaps || buyerData?.lokasi_gmaps || null;
+
+          const buyerInfo: BuyerInfo = {
+            id: order.pembeli_id || '',
+            nama: bName,
+            email: bEmail,
+            nomor_hp: bPhone,
+            foto_profil: bPhoto,
+            alamat: bAlamat,
+            lokasi: buyerData?.lokasi || null,
+            lokasi_gmaps: bGmaps,
+            alamat_pengiriman: order.alamat_pengiriman || null,
+            link_gmaps: order.link_gmaps || null,
+            orderType: order.metode_pengambilan === 'pickup' ? 'PICKUP' : 'DELIVERY',
+            orderCode: generateNumericCode(order.id)
+          };
+
           if (!groupedMap[key]) {
             groupedMap[key] = {
               id: generateNumericCode(order.id), 
               rawIds: [order.id],
               qty: 1,
-              buyerName: 'Pelanggan',
+              buyerName: bName,
+              buyerInfo: buyerInfo,
               items: productInfo ? productInfo.nama_makanan : 'Produk Tidak Dikenal',
               type: order.metode_pengambilan === 'pickup' ? 'PICKUP' : 'DELIVERY',
               time: new Date(order.created_at).toLocaleString('id-ID', { 
@@ -223,10 +284,19 @@ export default function ManageOrders({ merchantId }: { merchantId: string }) {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="font-bold text-neutral-900 text-base">{order.items} <span className="text-sm font-semibold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded ml-1">x{order.qty}</span></div>
-                        <div className="text-sm text-neutral-500 mb-1 flex items-center gap-1">
+                        <div className="font-bold text-neutral-900 text-base">
+                          {order.items} <span className="text-sm font-semibold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded ml-1">x{order.qty}</span>
+                        </div>
+                        <div className="text-sm text-neutral-500 mb-1 flex items-center gap-1.5 flex-wrap">
                           <span className="w-1.5 h-1.5 rounded-full bg-neutral-300"></span>
-                          Pembeli: <span className="font-semibold text-neutral-700">{order.buyerName}</span>
+                          <span>Pembeli:</span>
+                          <span className="font-semibold text-neutral-800">{order.buyerName}</span>
+                          <button 
+                            onClick={() => setSelectedBuyer(order.buyerInfo)}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-neutral-700 hover:text-neutral-900 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 px-2 py-0.5 rounded transition-colors ml-1"
+                          >
+                            <User size={11} /> Detail Pembeli
+                          </button>
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <span className={`inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold tracking-wide uppercase ${order.type === 'PICKUP' ? 'bg-purple-50 text-purple-700' : 'bg-orange-50 text-orange-700'}`}>
@@ -300,9 +370,127 @@ export default function ManageOrders({ merchantId }: { merchantId: string }) {
         )}
       </div>
 
+      {/* MODAL DETAIL PEMBELI */}
+      {selectedBuyer && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-2xs" 
+          onClick={() => setSelectedBuyer(null)}
+        >
+          <div 
+            className="bg-white rounded-2xl border border-neutral-200 max-w-md w-full shadow-2xl overflow-hidden p-6 space-y-5" 
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header Modal */}
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+              <div>
+                <h3 className="text-lg font-black text-neutral-900 tracking-tight">Detail Pembeli</h3>
+                <p className="text-xs text-neutral-500 mt-0.5">No. Ref Pesanan: #{selectedBuyer.orderCode}</p>
+              </div>
+              <button 
+                onClick={() => setSelectedBuyer(null)}
+                className="text-neutral-400 hover:text-neutral-700 p-1.5 rounded-lg hover:bg-neutral-100 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Profil Singkat Pembeli */}
+            <div className="flex items-center gap-4">
+              {selectedBuyer.foto_profil ? (
+                <img 
+                  src={selectedBuyer.foto_profil} 
+                  alt={selectedBuyer.nama} 
+                  className="w-14 h-14 rounded-full object-cover border border-neutral-200 bg-neutral-100 shrink-0" 
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-full bg-orange-100 text-orange-700 font-black text-lg flex items-center justify-center border border-orange-200 shrink-0 uppercase">
+                  {selectedBuyer.nama ? selectedBuyer.nama.substring(0, 2) : "PL"}
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <h4 className="font-black text-neutral-900 text-base truncate">{selectedBuyer.nama}</h4>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                    selectedBuyer.orderType === 'DELIVERY' 
+                      ? 'bg-orange-50 text-orange-700 border border-orange-200' 
+                      : 'bg-purple-50 text-purple-700 border border-purple-200'
+                  }`}>
+                    {selectedBuyer.orderType === 'DELIVERY' ? <Truck size={11} /> : <Store size={11} />}
+                    {selectedBuyer.orderType === 'DELIVERY' ? 'Pengiriman Kurir' : 'Ambil di Toko'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Kontak Telepon */}
+            <div className="bg-neutral-50 p-3.5 rounded-xl border border-neutral-100 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Phone size={15} className="text-neutral-400" />
+                <div>
+                  <p className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">Kontak / No. HP</p>
+                  <p className="text-sm font-bold text-neutral-900">
+                    {selectedBuyer.nomor_hp || "Nomor telepon belum diatur"}
+                  </p>
+                </div>
+              </div>
+              {selectedBuyer.nomor_hp && (
+                <a 
+                  href={`https://wa.me/${selectedBuyer.nomor_hp.replace(/^0/, '62').replace(/[^0-9]/g, '')}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1 rounded-lg transition-colors"
+                >
+                  WhatsApp
+                </a>
+              )}
+            </div>
+
+            {/* Alamat */}
+            <div className="bg-neutral-50 p-3.5 rounded-xl border border-neutral-100 space-y-2">
+              <div className="flex items-center gap-2">
+                <MapPin size={15} className="text-neutral-400" />
+                <p className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
+                  {selectedBuyer.orderType === 'DELIVERY' ? 'Alamat Pengiriman' : 'Alamat Domisili'}
+                </p>
+              </div>
+              <p className="text-sm text-neutral-800 leading-relaxed pl-6 whitespace-pre-line font-normal">
+                {selectedBuyer.alamat || "Alamat belum dicantumkan oleh pembeli."}
+              </p>
+              {selectedBuyer.lokasi_gmaps && (
+                <div className="pt-1 pl-6">
+                  <a 
+                    href={selectedBuyer.lokasi_gmaps} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-orange-600 hover:text-orange-700 hover:underline"
+                  >
+                    <ExternalLink size={12} /> Buka Titik Peta Google Maps
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Email Pelanggan (Jika Ada) */}
+            {selectedBuyer.email && (
+              <p className="text-xs text-neutral-500 px-1">
+                Email terdaftar: <span className="font-semibold text-neutral-700">{selectedBuyer.email}</span>
+              </p>
+            )}
+
+            {/* Tombol Tutup */}
+            <button 
+              onClick={() => setSelectedBuyer(null)}
+              className="w-full bg-neutral-900 hover:bg-neutral-800 text-white font-bold py-2.5 rounded-xl text-sm transition-colors shadow-xs"
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Image Modal for Proof of Payment */}
       {selectedProof && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setSelectedProof(null)}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-2xs p-4" onClick={() => setSelectedProof(null)}>
           <div className="relative max-w-2xl w-full max-h-[90vh] flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
             <button 
               onClick={() => setSelectedProof(null)}
