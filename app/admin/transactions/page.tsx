@@ -102,96 +102,109 @@ export default function AdminTransactionsPage() {
     }
 
     setIsProcessing(true);
+
     try {
-      // 1. Ambil saldo terkini penjual
-      const { data: sellerData, error: sErr } = await supabase
-        .from("profiles")
-        .select("saldo_penjual, saldo_tertahan")
-        .eq("id", sellerId)
-        .single();
+      if (type === "approve") {
+        // ADMIN MENYETUJUI:
+        // 1. Pindahkan nominal dari saldo_tertahan ke saldo_penjual
+        const currentPenjual = Number(order.produk?.penjual?.saldo_penjual || 0);
+        const currentTertahan = Number(order.produk?.penjual?.saldo_tertahan || 0);
 
-      if (sErr || !sellerData) throw new Error("Gagal mengambil profil penjual.");
+        const newPenjual = currentPenjual + nominal;
+        const newTertahan = Math.max(0, currentTertahan - nominal);
 
-      const currentAvailable = Number(sellerData.saldo_penjual || 0);
-      const currentPending = Number(sellerData.saldo_tertahan || 0);
-
-      if (type === "approve" || type === "reapprove") {
-        // SETUJUI TRANSAKSI
-        let newPending = currentPending;
-        let newAvailable = currentAvailable + nominal;
-
-        // Jika sebelumnya berstatus 'pending', kurangi saldo tertahan
-        if (order.escrow_status === "pending") {
-          newPending = Math.max(0, currentPending - nominal);
-        }
-
-        // Update profil penjual
-        const { error: profErr } = await supabase
+        const { error: profileError } = await supabase
           .from("profiles")
           .update({
-            saldo_penjual: newAvailable,
-            saldo_tertahan: newPending
+            saldo_penjual: newPenjual,
+            saldo_tertahan: newTertahan,
+            updated_at: new Date().toISOString()
           })
           .eq("id", sellerId);
 
-        if (profErr) throw profErr;
+        if (profileError) throw profileError;
 
-        // Update pesanan
-        const { error: ordErr } = await supabase
+        // 2. Tandai escrow_status pesanan menjadi 'approved'
+        const { error: orderError } = await supabase
           .from("pesanan")
           .update({
             escrow_status: "approved",
-            catatan_verifikasi: type === "reapprove" 
-              ? `Disetujui kembali via masa sanggah: ${actionReason || "Bukti valid"}` 
-              : (actionReason || "Pembayaran diverifikasi sah"),
+            catatan_verifikasi: actionReason.trim() || "Pembayaran diverifikasi sah oleh admin.",
             verified_at: new Date().toISOString()
           })
           .eq("id", order.id);
 
-        if (ordErr) throw ordErr;
-        alert(type === "reapprove" ? "Masa sanggah diterima! Dana berhasil dipindahkan ke saldo utama penjual." : "Transaksi disetujui! Dana berhasil masuk ke saldo utama penjual.");
+        if (orderError) throw orderError;
+
+        alert("Transaksi berhasil disetujui! Saldo siap tarik telah masuk ke akun penjual.");
 
       } else if (type === "reject") {
-        // TOLAK TRANSAKSI
-        if (!actionReason.trim()) {
-          alert("Alasan penolakan wajib diisi agar penjual mengetahui detailnya.");
-          setIsProcessing(false);
-          return;
-        }
+        // ADMIN MENOLAK (Terindikasi Fiktif / Bukti Palsu):
+        // 1. Kurangi saldo_tertahan penjual (karena transaksi dibatalkan)
+        const currentTertahan = Number(order.produk?.penjual?.saldo_tertahan || 0);
+        const newTertahan = Math.max(0, currentTertahan - nominal);
 
-        // Kurangi saldo tertahan jika sebelumnya berstatus pending
-        let newPending = currentPending;
-        if (order.escrow_status === "pending") {
-          newPending = Math.max(0, currentPending - nominal);
-        }
-
-        const { error: profErr } = await supabase
+        const { error: profileError } = await supabase
           .from("profiles")
-          .update({ saldo_tertahan: newPending })
+          .update({
+            saldo_tertahan: newTertahan,
+            updated_at: new Date().toISOString()
+          })
           .eq("id", sellerId);
 
-        if (profErr) throw profErr;
+        if (profileError) throw profileError;
 
-        // Catat rejected_at dan masa sanggah
-        const { error: ordErr } = await supabase
+        // 2. Set escrow_status menjadi 'rejected' dengan timestamp penolakan (batas 7 hari)
+        const { error: orderError } = await supabase
           .from("pesanan")
           .update({
             escrow_status: "rejected",
-            rejected_at: new Date().toISOString(),
-            catatan_verifikasi: actionReason.trim()
+            catatan_verifikasi: actionReason.trim() || "Bukti transfer tidak valid atau mutasi tidak ditemukan.",
+            rejected_at: new Date().toISOString()
           })
           .eq("id", order.id);
 
-        if (ordErr) throw ordErr;
-        alert("Transaksi ditolak. Penjual memiliki waktu 7 hari untuk mengajukan bukti sanggahan.");
+        if (orderError) throw orderError;
+
+        alert("Transaksi ditolak. Penjual memiliki masa sanggah selama 7 hari.");
+
+      } else if (type === "reapprove") {
+        // ADMIN MENGUBAH KEPUTUSAN DALAM MASA SANGGAH (7 HARI):
+        // 1. Tambahkan nominal ke saldo_penjual
+        const currentPenjual = Number(order.produk?.penjual?.saldo_penjual || 0);
+        const newPenjual = currentPenjual + nominal;
+
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .update({
+            saldo_penjual: newPenjual,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", sellerId);
+
+        if (profileError) throw profileError;
+
+        // 2. Ubah status pesanan menjadi 'approved'
+        const { error: orderError } = await supabase
+          .from("pesanan")
+          .update({
+            escrow_status: "approved",
+            catatan_verifikasi: actionReason.trim() || "Sanggahan diterima. Transaksi diverifikasi sah oleh admin.",
+            verified_at: new Date().toISOString()
+          })
+          .eq("id", order.id);
+
+        if (orderError) throw orderError;
+
+        alert("Keputusan berhasil diperbarui! Dana telah dicairkan ke saldo penjual.");
       }
 
       setActiveAction(null);
       setActionReason("");
       fetchOrders();
     } catch (err: any) {
-      console.error("Gagal memperbarui status escrow:", err);
-      alert("Terjadi kesalahan: " + (err.message || "Gagal memproses."));
+      console.error("Gagal memproses verifikasi:", err);
+      alert("Terjadi kesalahan: " + (err.message || "Gagal menghubungi server."));
     } finally {
       setIsProcessing(false);
     }
@@ -202,110 +215,114 @@ export default function AdminTransactionsPage() {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("id-ID", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit"
+    if (!dateStr) return "-";
+    return new Date(dateStr).toLocaleString("id-ID", {
+      dateStyle: "medium",
+      timeStyle: "short"
     });
   };
 
-  const filteredOrders = orders.filter((o) => {
-    const escrow = o.escrow_status || "pending";
-    const matchesFilter = filter === "all" || escrow === filter;
+  const filteredOrders = orders.filter((order) => {
+    const escrow = order.escrow_status || "pending";
+    if (filter === "pending" && escrow !== "pending") return false;
+    if (filter === "approved" && escrow !== "approved") return false;
+    if (filter === "rejected" && escrow !== "rejected") return false;
 
-    const buyerName = o.pembeli?.nama?.toLowerCase() || "";
-    const sellerName = o.produk?.penjual?.nama?.toLowerCase() || "";
-    const foodName = o.produk?.nama_makanan?.toLowerCase() || "";
-    const query = search.toLowerCase();
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const sellerName = order.produk?.penjual?.nama?.toLowerCase() || "";
+      const buyerName = order.pembeli?.nama?.toLowerCase() || "";
+      const foodName = order.produk?.nama_makanan?.toLowerCase() || "";
+      const orderId = order.id.toLowerCase();
+      return sellerName.includes(q) || buyerName.includes(q) || foodName.includes(q) || orderId.includes(q);
+    }
 
-    const matchesSearch = buyerName.includes(query) || sellerName.includes(query) || foodName.includes(query);
-    return matchesFilter && matchesSearch;
+    return true;
   });
 
-  const pendingCount = orders.filter(o => (o.escrow_status || "pending") === "pending").length;
-  const approvedCount = orders.filter(o => o.escrow_status === "approved").length;
-  const rejectedCount = orders.filter(o => o.escrow_status === "rejected").length;
+  const countPending = orders.filter(o => (o.escrow_status || "pending") === "pending").length;
+  const countApproved = orders.filter(o => o.escrow_status === "approved").length;
+  const countRejected = orders.filter(o => o.escrow_status === "rejected").length;
 
   return (
     <div className="space-y-6">
       {/* HEADER */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-black text-neutral-900">Verifikasi Transaksi & Escrow</h1>
-          <p className="text-neutral-600 mt-1 font-medium">
+          <h1 className="text-3xl font-black text-neutral-900 tracking-tight">Verifikasi Transaksi & Escrow</h1>
+          <p className="text-neutral-600 mt-1 font-medium text-sm">
             Verifikasi mutasi rekening masuk sebelum dana diteruskan ke saldo utama toko penjual.
           </p>
         </div>
         <button
           onClick={fetchOrders}
-          className="flex items-center gap-2 px-4 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-sm transition-colors w-fit"
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-neutral-200 rounded-xl text-neutral-700 font-bold hover:bg-neutral-50 shadow-xs text-sm transition-all"
         >
-          <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Muat Ulang
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          <span>Muat Ulang</span>
         </button>
       </div>
 
-      {/* STATS KARTU */}
+      {/* STATISTIK RINGKAS */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-sm flex items-center justify-between">
+        <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-1">Perlu Verifikasi</p>
-            <p className="text-3xl font-black text-amber-600">{pendingCount}</p>
+            <p className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Perlu Verifikasi</p>
+            <p className="text-3xl font-black text-amber-600 mt-1">{countPending}</p>
           </div>
-          <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
-            <Clock size={22} />
+          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+            <Clock size={24} />
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-sm flex items-center justify-between">
+        <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-1">Dana Disetujui</p>
-            <p className="text-3xl font-black text-emerald-600">{approvedCount}</p>
+            <p className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Dana Disetujui</p>
+            <p className="text-3xl font-black text-emerald-600 mt-1">{countApproved}</p>
           </div>
-          <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-            <CheckCircle2 size={22} />
+          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <CheckCircle2 size={24} />
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-sm flex items-center justify-between">
+        <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-1">Ditolak / Sanggah (7 Hari)</p>
-            <p className="text-3xl font-black text-red-600">{rejectedCount}</p>
+            <p className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Ditolak / Sanggah (7 Hari)</p>
+            <p className="text-3xl font-black text-red-600 mt-1">{countRejected}</p>
           </div>
-          <div className="w-11 h-11 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center font-bold">
-            <AlertTriangle size={22} />
+          <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
+            <AlertTriangle size={24} />
           </div>
         </div>
       </div>
 
       {/* FILTER & PENCARIAN */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white p-4 rounded-2xl border border-neutral-100 shadow-sm">
-        <div className="relative w-full sm:w-80">
-          <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
-          <input 
+      <div className="bg-white p-4 rounded-2xl border border-neutral-100 shadow-xs flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+          <input
             type="text"
             placeholder="Cari penjual, pembeli, atau makanan..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 text-neutral-900"
+            className="w-full pl-10 pr-4 py-2 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
         </div>
 
-        <div className="flex gap-2 w-full sm:w-auto overflow-x-auto">
+        <div className="flex gap-2">
           {[
             { id: "all", label: "Semua" },
-            { id: "pending", label: `Perlu Dicek (${pendingCount})` },
+            { id: "pending", label: `Perlu Dicek (${countPending})` },
             { id: "approved", label: "Disetujui" },
-            { id: "rejected", label: `Ditolak (${rejectedCount})` }
-          ].map((tab) => (
+            { id: "rejected", label: `Ditolak (${countRejected})` }
+          ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setFilter(tab.id)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
-                filter === tab.id 
-                  ? "bg-neutral-900 text-white" 
-                  : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+              className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all ${
+                filter === tab.id
+                  ? "bg-neutral-900 text-white shadow-xs"
+                  : "bg-neutral-50 text-neutral-600 hover:bg-neutral-100"
               }`}
             >
               {tab.label}
@@ -315,30 +332,31 @@ export default function AdminTransactionsPage() {
       </div>
 
       {/* TABEL TRANSAKSI */}
-      <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-neutral-100 shadow-xs overflow-hidden">
         {loading ? (
-          <div className="p-12 text-center text-neutral-500 flex items-center justify-center gap-2">
-            <Loader2 className="animate-spin text-orange-600" /> Memuat data transaksi...
+          <div className="p-12 text-center text-neutral-400 flex flex-col items-center justify-center gap-2">
+            <Loader2 size={32} className="animate-spin text-orange-500" />
+            <p className="text-sm font-semibold">Memuat transaksi escrow...</p>
           </div>
         ) : filteredOrders.length === 0 ? (
           <div className="p-12 text-center text-neutral-400 font-medium">
-            Tidak ada transaksi pada kategori ini.
+            Tidak ada transaksi untuk filter ini.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse text-sm min-w-[950px]">
               <thead>
-                <tr className="bg-neutral-50 text-neutral-600 text-xs uppercase font-bold tracking-wider border-b border-neutral-100">
-                  <th className="py-4 px-6">Waktu & Pesanan</th>
-                  <th className="py-4 px-6">Identitas Penjual</th>
-                  <th className="py-4 px-6">Identitas Pembeli</th>
-                  <th className="py-4 px-6">Nominal & Makanan</th>
-                  <th className="py-4 px-6">Bukti Transfer</th>
-                  <th className="py-4 px-6">Status Escrow</th>
-                  <th className="py-4 px-6 text-right">Aksi Verifikasi</th>
+                <tr className="bg-neutral-50/70 border-b border-neutral-100 text-[11px] font-bold uppercase tracking-wider text-neutral-500">
+                  <th className="py-3.5 px-4">Waktu & Pesanan</th>
+                  <th className="py-3.5 px-4">Identitas Penjual</th>
+                  <th className="py-3.5 px-4">Identitas Pembeli</th>
+                  <th className="py-3.5 px-4">Nominal & Makanan</th>
+                  <th className="py-3.5 px-4">Bukti Transfer</th>
+                  <th className="py-3.5 px-4">Status Escrow</th>
+                  <th className="py-3.5 px-4 text-right">Tindakan Admin</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-100 text-sm">
+              <tbody className="divide-y divide-neutral-100">
                 {filteredOrders.map((order) => {
                   const escrow = order.escrow_status || "pending";
                   const remainingDays = getRemainingDisputeDays(order.rejected_at);
@@ -346,8 +364,8 @@ export default function AdminTransactionsPage() {
 
                   return (
                     <tr key={order.id} className="hover:bg-neutral-50/50 transition-colors">
-                      {/* Waktu & ID */}
-                      <td className="py-4 px-6">
+                      {/* ID Pesanan */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         <p className="font-bold text-neutral-900">#{order.id.substring(0, 8)}</p>
                         <p className="text-xs text-neutral-500">{formatDate(order.created_at)}</p>
                         <span className="inline-block mt-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-neutral-100 text-neutral-700">
@@ -356,9 +374,9 @@ export default function AdminTransactionsPage() {
                       </td>
 
                       {/* Penjual */}
-                      <td className="py-4 px-6">
+                      <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2">
-                          <Store size={15} className="text-orange-600 flex-shrink-0" />
+                          <Store size={15} className="text-orange-600 shrink-0" />
                           <div>
                             <p className="font-bold text-neutral-900">{order.produk?.penjual?.nama || "Toko Penjual"}</p>
                             <p className="text-xs text-neutral-500">{order.produk?.penjual?.nomor_hp || order.produk?.penjual?.email || "-"}</p>
@@ -367,9 +385,9 @@ export default function AdminTransactionsPage() {
                       </td>
 
                       {/* Pembeli */}
-                      <td className="py-4 px-6">
+                      <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2">
-                          <User size={15} className="text-blue-600 flex-shrink-0" />
+                          <User size={15} className="text-blue-600 shrink-0" />
                           <div>
                             <p className="font-bold text-neutral-900">{order.pembeli?.nama || "Pembeli"}</p>
                             <p className="text-xs text-neutral-500">{order.pembeli?.nomor_hp || order.pembeli?.email || "-"}</p>
@@ -378,31 +396,43 @@ export default function AdminTransactionsPage() {
                       </td>
 
                       {/* Makanan & Nominal */}
-                      <td className="py-4 px-6">
+                      <td className="py-3.5 px-4">
                         <p className="font-bold text-neutral-900">{order.produk?.nama_makanan}</p>
                         <p className="font-extrabold text-orange-600 text-sm">{formatCurrency(order.produk?.harga_diskon || 0)}</p>
                       </td>
 
-                      {/* Bukti Bayar */}
-                      <td className="py-4 px-6">
+                      {/* Bukti Bayar (Thumbnail + Tombol Buka Bukti) */}
+                      <td className="py-3.5 px-4">
                         {order.bukti_bayar_url ? (
-                          <button
-                            onClick={() => setSelectedProof(order.bukti_bayar_url)}
-                            className="group relative w-12 h-12 rounded-xl overflow-hidden border border-neutral-200 hover:border-orange-500 transition-all flex items-center justify-center bg-neutral-100"
-                            title="Klik untuk melihat bukti penuh"
-                          >
-                            <img src={order.bukti_bayar_url} alt="Bukti Transfer" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                              <Eye size={16} />
+                          <div className="flex flex-col gap-1.5 items-start">
+                            <div
+                              onClick={() => setSelectedProof(order.bukti_bayar_url)}
+                              className="group relative w-16 h-16 rounded-xl overflow-hidden border border-neutral-200 hover:border-orange-500 transition-all flex items-center justify-center bg-neutral-100 cursor-pointer shadow-2xs"
+                              title="Klik untuk memperbesar bukti transfer"
+                            >
+                              <img 
+                                src={order.bukti_bayar_url} 
+                                alt="Bukti Transfer" 
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform" 
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                <Eye size={18} />
+                              </div>
                             </div>
-                          </button>
+                            <button
+                              onClick={() => setSelectedProof(order.bukti_bayar_url)}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap"
+                            >
+                              <Eye size={11} /> Lihat Bukti
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-xs text-neutral-400 italic">Tidak ada bukti</span>
                         )}
                       </td>
 
                       {/* Status Escrow */}
-                      <td className="py-4 px-6">
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         {escrow === "pending" && (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
                             <Clock size={12} /> Perlu Cek Bank
@@ -433,18 +463,18 @@ export default function AdminTransactionsPage() {
                       </td>
 
                       {/* Aksi */}
-                      <td className="py-4 px-6 text-right">
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
                         {escrow === "pending" && (
                           <div className="flex justify-end gap-2">
                             <button
                               onClick={() => setActiveAction({ order, type: "approve" })}
-                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-colors"
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-colors shadow-2xs cursor-pointer"
                             >
                               Setujui
                             </button>
                             <button
                               onClick={() => setActiveAction({ order, type: "reject" })}
-                              className="px-3 py-1.5 bg-neutral-100 hover:bg-red-50 hover:text-red-700 text-neutral-700 font-bold rounded-xl text-xs transition-colors"
+                              className="px-3 py-1.5 bg-neutral-100 hover:bg-red-50 hover:text-red-700 text-neutral-700 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-neutral-200"
                             >
                               Tolak
                             </button>
@@ -454,15 +484,18 @@ export default function AdminTransactionsPage() {
                         {escrow === "rejected" && isDisputeActive && (
                           <button
                             onClick={() => setActiveAction({ order, type: "reapprove" })}
-                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-colors"
-                            title="Tinjau ulang bukti dan teruskan dana jika penjual sah"
+                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs transition-colors shadow-2xs cursor-pointer"
+                            title="Tinjau ulang dan setujui dalam masa 7 hari sanggah"
                           >
                             Tinjau Ulang & Setujui
                           </button>
                         )}
 
                         {escrow === "approved" && (
-                          <span className="text-xs text-neutral-400 font-medium">Selesai</span>
+                          <span className="text-xs text-neutral-400 font-semibold italic">Terverifikasi</span>
+                        )}
+                        {escrow === "rejected" && !isDisputeActive && (
+                          <span className="text-xs text-neutral-400 font-semibold italic">Permanen Ditolak</span>
                         )}
                       </td>
                     </tr>
@@ -474,11 +507,11 @@ export default function AdminTransactionsPage() {
         )}
       </div>
 
-      {/* MODAL KONFIRMASI AKSI (SETUJUI / TOLAK / TINJAU ULANG) */}
+      {/* MODAL KONFIRMASI AKSI (SETUJUI / TOLAK / TINJAU ULANG) DENGAN FOTO BUKTI */}
       {activeAction && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl border border-neutral-100">
-            <h3 className="text-xl font-black text-neutral-900 mb-2">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 md:p-7 shadow-2xl border border-neutral-100 max-h-[92vh] overflow-y-auto">
+            <h3 className="text-xl font-black text-neutral-900 mb-1">
               {activeAction.type === "approve"
                 ? "Setujui Pembayaran Transaksi"
                 : activeAction.type === "reapprove"
@@ -486,7 +519,7 @@ export default function AdminTransactionsPage() {
                 : "Tolak Transaksi Pembayaran"}
             </h3>
 
-            <p className="text-sm text-neutral-600 mb-4 leading-relaxed">
+            <p className="text-xs text-neutral-600 mb-4 leading-relaxed">
               {activeAction.type === "approve"
                 ? "Pastikan uang riil dari pembeli telah masuk ke rekening mutasi bank Anda. Dana akan langsung dipindahkan ke saldo utama penjual."
                 : activeAction.type === "reapprove"
@@ -494,7 +527,8 @@ export default function AdminTransactionsPage() {
                 : "Transaksi ini dianggap fiktif / uang tidak masuk. Dana tidak akan diberikan ke penjual, namun penjual diberi waktu sanggah 7 hari."}
             </p>
 
-            <div className="bg-neutral-50 p-4 rounded-xl border border-neutral-200 mb-4 space-y-1.5 text-sm">
+            {/* RINGKASAN DATA TRANSAKSI */}
+            <div className="bg-neutral-50 p-3.5 rounded-xl border border-neutral-200 mb-4 space-y-1.5 text-xs">
               <div className="flex justify-between">
                 <span className="text-neutral-500">Toko Penjual:</span>
                 <span className="font-bold text-neutral-900">{activeAction.order.produk?.penjual?.nama}</span>
@@ -505,9 +539,44 @@ export default function AdminTransactionsPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-neutral-500">Nominal Hak Toko:</span>
-                <span className="font-black text-orange-600 text-base">{formatCurrency(activeAction.order.produk?.harga_diskon || 0)}</span>
+                <span className="font-black text-orange-600 text-sm">{formatCurrency(activeAction.order.produk?.harga_diskon || 0)}</span>
               </div>
             </div>
+
+            {/* FOTO BUKTI PEMBAYARAN DI DALAM MODAL KONFIRMASI */}
+            {activeAction.order.bukti_bayar_url ? (
+              <div className="space-y-1.5 mb-4">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-neutral-700 uppercase tracking-wider">
+                    Foto Bukti Transfer Pembeli:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProof(activeAction.order.bukti_bayar_url)}
+                    className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Eye size={12} /> Perbesar Foto
+                  </button>
+                </div>
+                <div 
+                  onClick={() => setSelectedProof(activeAction.order.bukti_bayar_url)}
+                  className="relative cursor-pointer rounded-xl overflow-hidden border border-neutral-300 bg-neutral-100 hover:border-orange-500 group max-h-52 flex items-center justify-center p-1"
+                >
+                  <img 
+                    src={activeAction.order.bukti_bayar_url} 
+                    alt="Bukti Transfer Pembeli" 
+                    className="max-h-48 w-auto max-w-full object-contain rounded-lg" 
+                  />
+                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white font-bold text-xs gap-1.5 transition-opacity rounded-xl">
+                    <Eye size={16} /> Klik untuk melihat ukuran penuh
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-amber-50 text-amber-800 text-xs rounded-xl border border-amber-200 mb-4 font-medium">
+                Perhatian: Pesanan ini tidak memiliki unggahan foto bukti bayar.
+              </div>
+            )}
 
             <form onSubmit={handleActionConfirm} className="space-y-4">
               <div>
@@ -516,15 +585,15 @@ export default function AdminTransactionsPage() {
                 </label>
                 <textarea
                   required={activeAction.type === "reject"}
-                  rows={3}
+                  rows={2}
                   value={actionReason}
                   onChange={(e) => setActionReason(e.target.value)}
                   placeholder={
                     activeAction.type === "reject" 
-                      ? "Contoh: Mutasi rekening tidak ditemukan atau bukti transfer terindikasi rekayasa." 
-                      : "Contoh: Uang sudah masuk ke mutasi BCA."
+                      ? "Contoh: Mutasi rekening tidak ditemukan atau bukti transfer terindikasi palsu." 
+                      : "Contoh: Uang sudah masuk mutasi BCA."
                   }
-                  className="w-full border border-neutral-300 rounded-xl p-3 text-sm text-neutral-900 focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                  className="w-full border border-neutral-300 rounded-xl p-3 text-xs text-neutral-900 focus:ring-2 focus:ring-orange-500 focus:outline-none bg-white"
                 />
               </div>
 
@@ -532,14 +601,14 @@ export default function AdminTransactionsPage() {
                 <button
                   type="button"
                   onClick={() => setActiveAction(null)}
-                  className="flex-1 px-4 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-sm transition-colors"
+                  className="flex-1 px-4 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={isProcessing}
-                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-white font-bold rounded-xl text-sm transition-colors shadow-md ${
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white font-bold rounded-xl text-xs transition-colors shadow-md cursor-pointer ${
                     activeAction.type === "reject"
                       ? "bg-red-600 hover:bg-red-700 shadow-red-600/30"
                       : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/30"
@@ -555,19 +624,45 @@ export default function AdminTransactionsPage() {
 
       {/* MODAL LIHAT GAMBAR BUKTI TRANSFER LENGKAP */}
       {selectedProof && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setSelectedProof(null)}>
-          <div className="relative max-w-2xl w-full max-h-[90vh] flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
-            <button 
-              onClick={() => setSelectedProof(null)}
-              className="absolute -top-12 right-0 text-white hover:text-red-400 bg-neutral-800 hover:bg-neutral-900 rounded-full p-2 transition-all"
-            >
-              <X size={24} />
-            </button>
-            <img 
-              src={selectedProof} 
-              alt="Bukti Transfer Pembeli" 
-              className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border-2 border-neutral-700" 
-            />
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-2xs p-4" 
+          onClick={() => setSelectedProof(null)}
+        >
+          <div 
+            className="relative bg-neutral-900 rounded-2xl overflow-hidden max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-neutral-700" 
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header Modal Bukti */}
+            <div className="flex items-center justify-between px-4 py-3 bg-neutral-800 border-b border-neutral-700">
+              <span className="text-sm font-bold text-white flex items-center gap-2">
+                <Receipt size={16} className="text-orange-400" /> Bukti Transfer Pembayaran Pembeli
+              </span>
+              <button 
+                onClick={() => setSelectedProof(null)}
+                className="text-neutral-400 hover:text-white bg-neutral-700/60 hover:bg-neutral-700 rounded-lg p-1.5 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Gambar Bukti Penuh */}
+            <div className="p-4 flex items-center justify-center overflow-auto max-h-[75vh] bg-neutral-950">
+              <img 
+                src={selectedProof} 
+                alt="Bukti Transfer Pembeli" 
+                className="max-h-[70vh] w-auto max-w-full object-contain rounded-lg shadow-md" 
+              />
+            </div>
+
+            {/* Footer Modal Bukti */}
+            <div className="px-4 py-2.5 bg-neutral-800 border-t border-neutral-700 flex justify-end">
+              <button
+                onClick={() => setSelectedProof(null)}
+                className="px-4 py-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
+              >
+                Tutup Pratinjau
+              </button>
+            </div>
           </div>
         </div>
       )}
